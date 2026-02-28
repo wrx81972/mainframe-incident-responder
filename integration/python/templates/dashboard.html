@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Mainframe Incident Responder</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        body { font-family: 'Courier New', monospace; background: #0a0a0a; color: #00ff41; margin: 0; padding: 20px; }
+        h1 { color: #00ff41; border-bottom: 1px solid #00ff41; padding-bottom: 10px; }
+        h2 { color: #00cc33; font-size: 1em; margin-top: 30px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }
+        .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+        .chart-box { background: #0f1f0f; border: 1px solid #00ff41; padding: 15px; border-radius: 4px; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+        th { background: #003300; color: #00ff41; padding: 6px; text-align: left; }
+        td { padding: 5px; border-bottom: 1px solid #003300; color: #ccffcc; }
+        .p1 { color: #ff4444; } .p2 { color: #ff8800; } .p3 { color: #ffff00; } .p4 { color: #00ff41; }
+        .open { color: #ff4444; } .in_progress { color: #ff8800; } .resolved { color: #00ff41; }
+        button { background: #003300; color: #00ff41; border: 1px solid #00ff41;
+                 padding: 8px 16px; cursor: pointer; font-family: monospace; margin-bottom: 20px; }
+        button:hover { background: #00ff41; color: #000; }
+        .header-info { font-size: 0.8em; color: #009922; }
+    </style>
+</head>
+<body>
+    <h1>⚙ MAINFRAME INCIDENT RESPONDER v1.0</h1>
+    <div class="header-info">
+        z/OS-inspired Incident Analysis System | COBOL/Assembler/DB2 | Built by Paweł Janik
+    </div>
+    <br>
+    <button onclick="runAnalyzer()">▶ RUN COBOL ANALYZER (ANALYZE.JCL)</button>
+    <div id="analyzer-output" style="font-size:0.8em; color:#009922;"></div>
+
+    <div class="grid-3">
+        <div class="chart-box"><div id="chart-abend"></div></div>
+        <div class="chart-box"><div id="chart-priority"></div></div>
+        <div class="chart-box"><div id="chart-status"></div></div>
+    </div>
+    <div class="chart-box" style="margin-top:20px">
+        <div id="chart-timeline"></div>
+    </div>
+
+    <h2>▼ INCIDENT TABLE (sorted by priority)</h2>
+    <div class="chart-box">
+        <table id="incident-table">
+            <thead><tr>
+                <th>ID</th><th>JOB</th><th>ABEND</th><th>STEP</th>
+                <th>P</th><th>STATUS</th><th>TIMESTAMP</th>
+            </tr></thead>
+            <tbody id="incident-tbody"></tbody>
+        </table>
+    </div>
+
+    <h2>▼ ABEND PLAYBOOK (z/OS Incident Resolution Guide)</h2>
+    <div class="chart-box">
+        <table id="playbook-table">
+            <thead><tr><th>ABEND</th><th>CAUSE</th><th>SOLUTION</th></tr></thead>
+            <tbody id="playbook-tbody"></tbody>
+        </table>
+    </div>
+
+<script>
+const DARK = { paper_bgcolor:'#0a0a0a', plot_bgcolor:'#0f1f0f',
+               font:{color:'#00ff41', family:'Courier New'} };
+
+async function loadStats() {
+    const r = await fetch('/api/stats');
+    const d = await r.json();
+
+    Plotly.newPlot('chart-abend', [{
+        x: d.abend_counts.map(r=>r.ABEND_CODE),
+        y: d.abend_counts.map(r=>r.count),
+        type:'bar', marker:{color:'#ff4444'}
+    }], {...DARK, title:'Abend Codes', height:250, margin:{t:40,b:30}});
+
+    Plotly.newPlot('chart-priority', [{
+        labels: d.priority_counts.map(r=>`P${r.PRIORITY}`),
+        values: d.priority_counts.map(r=>r.count),
+        type:'pie', marker:{colors:['#ff4444','#ff8800','#ffff00','#00ff41']}
+    }], {...DARK, title:'By Priority', height:250, margin:{t:40}});
+
+    Plotly.newPlot('chart-status', [{
+        labels: d.status_counts.map(r=>r.STATUS),
+        values: d.status_counts.map(r=>r.count),
+        type:'pie', marker:{colors:['#ff4444','#ff8800','#00ff41']}
+    }], {...DARK, title:'By Status', height:250, margin:{t:40}});
+
+    Plotly.newPlot('chart-timeline', [{
+        x: d.timeline.map(r=>r.date),
+        y: d.timeline.map(r=>r.count),
+        type:'scatter', mode:'lines+markers',
+        line:{color:'#00ff41'}, marker:{color:'#00ff41'}
+    }], {...DARK, title:'Incidents Over Time', height:200, margin:{t:40,b:40}});
+}
+
+async function loadIncidents() {
+    const r = await fetch('/api/incidents');
+    const incidents = await r.json();
+    const tbody = document.getElementById('incident-tbody');
+    tbody.innerHTML = incidents.map(i => `
+        <tr>
+            <td>${i.INC_ID}</td>
+            <td>${i.JOB_NAME}</td>
+            <td style="font-weight:bold">${i.ABEND_CODE}</td>
+            <td>${i.STEP_NAME||'-'}</td>
+            <td class="p${i.PRIORITY}">${i.PRIORITY}</td>
+            <td class="${i.STATUS.toLowerCase().replace('_','')}">${i.STATUS}</td>
+            <td>${i.TIMESTAMP}</td>
+        </tr>`).join('');
+}
+
+async function loadPlaybook() {
+    const r = await fetch('/api/playbook');
+    const rows = await r.json();
+    document.getElementById('playbook-tbody').innerHTML = rows.map(r=>`
+        <tr>
+            <td style="font-weight:bold;color:#ff8800">${r.ABEND_CODE}</td>
+            <td style="font-size:0.85em">${r.CAUSE}</td>
+            <td style="font-size:0.85em;color:#00cc33">${r.SOLUTION}</td>
+        </tr>`).join('');
+}
+
+async function runAnalyzer() {
+    document.getElementById('analyzer-output').textContent = 'Running COBOL pipeline...';
+    const r = await fetch('/api/run-analyzer', {method:'POST'});
+    const d = await r.json();
+    document.getElementById('analyzer-output').textContent =
+        d.status === 'ok' ? '✓ COBOL pipeline completed: ' + d.output : '✗ Error: ' + d.message;
+    loadStats(); loadIncidents();
+}
+
+loadStats(); loadIncidents(); loadPlaybook();
+</script>
+</body>
+</html>
+
